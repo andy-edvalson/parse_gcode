@@ -60,23 +60,23 @@ def print_layer_times(layer_times):
     for layer, time in sorted(layer_times.items()):
         print(f"Layer {layer}: estimated {time:.2f} seconds")
 
-def analyze_time_changes(layer_times, change_ratio = 0.2):
+def analyze_time_changes(layer_times, change_ratio = 0.2, max_dwell_time: int = 1200):
     previous_time = None
     for layer, time in sorted(layer_times.items()):
         if previous_time is not None:
-            change = (time - previous_time) / previous_time
+            change = min(max_dwell_time, (time - previous_time) / previous_time)
             if abs(change) > change_ratio:
                 print(f"Significant change at layer {layer}: {change*100:.2f}%")
         previous_time = time
 
-def smooth_layer_times_with_percentage(layer_times, change_ratio=0.2):
+def smooth_layer_times_with_percentage(layer_times, change_ratio=0.2, max_dwell_time: int = 1200):
     n = len(layer_times)
     
     # Forward pass: Increase times if needed to not decrease more than 20% from previous
     for i in range(1, n):
         max_time = layer_times[i - 1] * (1 - change_ratio)
         if layer_times[i] < max_time:
-            layer_times[i] = max_time
+            layer_times[i] = min(layer_times[i] + max_dwell_time, max_time)
     
     # Backward pass: Increase times if needed to not decrease more than 20% from next
     for i in range(n - 2, -1, -1):
@@ -101,7 +101,7 @@ def print_layer_times_comparison(original_times, smoothed_times):
         print("{:<10} {:<15} {:<15} {:<15}".format(orig_layer, f"{orig_time:.2f}", f"{smooth_time:.2f}", f"{delta:.2f}"))
 
 
-def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: bool = False, retraction_length_mm = 6, retraction_speed_mm_s = 40):
+def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: bool = False, retraction_length_mm = 6, retraction_speed_mm_s = 40, max_dwell_time: int = 1200):
     updated_gcode = []
     current_layer = None
 
@@ -114,9 +114,11 @@ def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: boo
                 actual_time = layer_times[current_layer]
                 target_time = target_times[current_layer]
                 if actual_time < target_time:
-                    dwell_time = target_time - actual_time
+                    dwell_time = min(max_dwell_time, (target_time - actual_time))
                     # Retract filament
                     if (retract):
+                      set_relative_retract_mode_cmd = 'M83\n'
+                      updated_gcode.append(set_relative_retract_mode_cmd)
                       retract_command = f"G1 E-{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Retract filament\n"
                       updated_gcode.append(retract_command)
 
@@ -128,6 +130,9 @@ def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: boo
                     if (retract):
                       advance_command = f"G1 E{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Re-advance filament\n"
                       updated_gcode.append(advance_command)
+                      set_abs_retract_mode_cmd = 'M82\n'
+                      updated_gcode.append(set_abs_retract_mode_cmd)
+
 
     return updated_gcode
 
@@ -157,6 +162,7 @@ def main():
     parser.add_argument("--mode", type=str, choices=["analyze", "clean"], required=True, help="Operational mode: analyze or clean")
     parser.add_argument("--retract", action='store_true', help="Enable retraction before dwell")
     parser.add_argument("--retraction_distance", type=float, default=6.0, help="Retraction distance in millimeters (default 6)")
+    parser.add_argument("--max_wait_sec", type=float, default=1200, help="Max time to wait per layer (default 1200 = 20 min)")
 
     args = parser.parse_args()
 
@@ -174,7 +180,8 @@ def main():
             target_times = smooth_layer_times_with_percentage(layer_times.copy(), args.variance / 100.0)
             updated_gcode = update_gcode_with_dwell(gcode_lines, layer_times, target_times,
                                                     retract=args.retract, 
-                                                    retraction_length_mm=args.retraction_distance)
+                                                    retraction_length_mm=args.retraction_distance,
+                                                    max_dwell_time=args.max_wait_sec)
             with open(args.output_file, 'w') as f:
                 f.writelines(updated_gcode)
             print(f"Updated G-code has been saved to {args.output_file}")
