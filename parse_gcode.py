@@ -101,7 +101,7 @@ def print_layer_times_comparison(original_times, smoothed_times):
         print("{:<10} {:<15} {:<15} {:<15}".format(orig_layer, f"{orig_time:.2f}", f"{smooth_time:.2f}", f"{delta:.2f}"))
 
 
-def update_gcode_with_dwell(gcode_lines, layer_times, target_times):
+def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: bool = False, retraction_length_mm = 6, retraction_speed_mm_s = 40):
     updated_gcode = []
     current_layer = None
 
@@ -115,11 +115,19 @@ def update_gcode_with_dwell(gcode_lines, layer_times, target_times):
                 target_time = target_times[current_layer]
                 if actual_time < target_time:
                     dwell_time = target_time - actual_time
-                    #dwell_command = f"G4 P{int(dwell_time * 1000)} ; Dwell for {dwell_time:.2f} seconds\n"
+                    # Retract filament
+                    if (retract):
+                      retract_command = f"G1 E-{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Retract filament\n"
+                      updated_gcode.append(retract_command)
+
+                    # dwell for a while
                     dwell_commands = insert_incremental_dwell(dwell_time, 10)
-                    dwell_commands_str = ''.join(dwell_commands)
-                    for cmd in dwell_commands:
-                      updated_gcode.append(cmd)
+                    updated_gcode.extend(dwell_commands)
+
+                    # Re-advance filament
+                    if (retract):
+                      advance_command = f"G1 E{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Re-advance filament\n"
+                      updated_gcode.append(advance_command)
 
     return updated_gcode
 
@@ -139,27 +147,34 @@ def insert_incremental_dwell(dwell_time, segment_length=30):
 
 
 
+import argparse
+
 def main():
     parser = argparse.ArgumentParser(description="G-code Layer Time Adjustment Tool")
     parser.add_argument("input_file", type=str, help="Path to the input G-code file")
     parser.add_argument("--output_file", type=str, default="", help="Path to the output G-code file (required for clean mode)")
     parser.add_argument("--variance", type=float, default=20.0, help="Allowable percentage variance between layers")
     parser.add_argument("--mode", type=str, choices=["analyze", "clean"], required=True, help="Operational mode: analyze or clean")
+    parser.add_argument("--retract", action='store_true', help="Enable retraction before dwell")
+    parser.add_argument("--retraction_distance", type=float, default=6.0, help="Retraction distance in millimeters (default 6)")
 
     args = parser.parse_args()
 
+    # Read and parse the G-code file
     gcode_lines = read_gcode(args.input_file)
-    layers = parse_layers(gcode_lines)  # Assuming this function parses layers and extracts commands
+    layers = parse_layers(gcode_lines)
     layer_times = {layer: process_layer(commands) for layer, commands in layers.items()}
-    
+
     if args.mode == "analyze":
         # Print problem layers and proposed changes
         print_layer_times_comparison(layer_times, smooth_layer_times_with_percentage(layer_times.copy(), args.variance / 100.0))
     elif args.mode == "clean":
         if args.output_file:
-            # Generate updated G-code with dwell times
+            # Generate updated G-code with dwell times and optional retraction
             target_times = smooth_layer_times_with_percentage(layer_times.copy(), args.variance / 100.0)
-            updated_gcode = update_gcode_with_dwell(gcode_lines, layer_times, target_times)
+            updated_gcode = update_gcode_with_dwell(gcode_lines, layer_times, target_times,
+                                                    retract=args.retract, 
+                                                    retraction_length_mm=args.retraction_distance)
             with open(args.output_file, 'w') as f:
                 f.writelines(updated_gcode)
             print(f"Updated G-code has been saved to {args.output_file}")
