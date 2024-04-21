@@ -7,11 +7,6 @@ def read_gcode(file_path):
         lines = file.readlines()
     return lines
 
-gcode_path = 'CE3E3V2_xSM41_1.gcode'
-gcode_output = 'cleaned.gcode'
-gcode_lines = read_gcode(gcode_path)
-
-
 def parse_layers(gcode_lines):
     layers = {}
     current_layer = None
@@ -22,8 +17,6 @@ def parse_layers(gcode_lines):
         if current_layer is not None and (line.startswith('G0') or line.startswith('G1')):
             layers[current_layer].append(line.strip())
     return layers
-
-layers = parse_layers(gcode_lines)
 
 def calculate_distance(x1, y1, x2, y2):
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
@@ -63,7 +56,6 @@ def process_layer(commands):
             last_coords = coords
     return time_total
 
-layer_times = {layer: process_layer(commands) for layer, commands in layers.items()}
 def print_layer_times(layer_times):
     for layer, time in sorted(layer_times.items()):
         print(f"Layer {layer}: estimated {time:.2f} seconds")
@@ -76,9 +68,6 @@ def analyze_time_changes(layer_times, change_ratio = 0.2):
             if abs(change) > change_ratio:
                 print(f"Significant change at layer {layer}: {change*100:.2f}%")
         previous_time = time
-
-# analyze_time_changes(layer_times)
-
 
 def smooth_layer_times_with_percentage(layer_times, change_ratio=0.2):
     n = len(layer_times)
@@ -96,8 +85,6 @@ def smooth_layer_times_with_percentage(layer_times, change_ratio=0.2):
             layer_times[i] = max_time
     
     return layer_times
-
-smoothed_times = smooth_layer_times_with_percentage(layer_times.copy())
 
 def print_layer_times_comparison(original_times, smoothed_times):
     # Print table header
