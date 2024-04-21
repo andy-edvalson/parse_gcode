@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python Debugger: v2 GCode Parser",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/parse_gcode.py",
+      "console": "integratedTerminal",
+      "args": ["v2.gcode", "--mode", "clean", "--output_file", "cleaned.gcode", "--variance", "10"]
+    }
+  ]
+}
