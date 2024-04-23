@@ -82,7 +82,7 @@ def smooth_layer_times_with_percentage(layer_times, change_ratio=0.2, max_dwell_
     for i in range(n - 2, -1, -1):
         max_time = layer_times[i + 1] * (1 - change_ratio)
         if layer_times[i] < max_time:
-            layer_times[i] = max_time
+            layer_times[i] = min(layer_times[i] + max_dwell_time, max_time)
     
     return layer_times
 
@@ -114,24 +114,42 @@ def update_gcode_with_dwell(gcode_lines, layer_times, target_times, retract: boo
                 actual_time = layer_times[current_layer]
                 target_time = target_times[current_layer]
                 if actual_time < target_time:
-                    dwell_time = min(max_dwell_time, (target_time - actual_time))
-                    # Retract filament
-                    if (retract):
-                      set_relative_retract_mode_cmd = 'M83\n'
-                      updated_gcode.append(set_relative_retract_mode_cmd)
-                      retract_command = f"G1 E-{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Retract filament\n"
-                      updated_gcode.append(retract_command)
+                    # Here's what we want to happen:
+                    # G91 ;Relative positioning
+                    # M83; Relative Extruder
+                    # G1 E-6 Z1 Y10 F2400 ;Retract and raise Z
+                    # G4 P10000 ; Dwell for 10 seconds
+                    # G4 P10000 ; Dwell for 10 seconds
+                    # G1 E5.9 Z-1 Y-10 F2400;Return
+                    # M82; Absolute Extruder
+                    # G90 ;Absolute positioning
+                                        
+                    dwell_time = min(max_dwell_time, target_time - actual_time)
+                    updated_gcode = []
 
-                    # dwell for a while
+                    # G-code commands for positioning and extruder control
+                    relative_pos_cmd = 'G91\n'
+                    abs_pos_cmd = 'G90\n'
+                    relative_extruder_cmd = 'M83\n'
+                    abs_extruder_cmd = 'M82\n'
+
+                    # Setup initial retract and position commands
+                    if retract:
+                        backoff_cmd = f"G1 E{-retraction_length_mm} Z1 Y10 F2400 ;Retract filament, raise Z, and shift Y\n"
+                        return_cmd = f"G1 E{retraction_length_mm - 0.1} Z-1 Y-10 F2400 ;Re-extrude slightly less, lower Z, and return Y\n"
+                    else:
+                        backoff_cmd = "G1 Z1 Y10 F2400 ;Just raise Z and shift Y without retracting\n"
+                        return_cmd = "G1 Z-1 Y-10 F2400 ;Return Z and Y to original positions\n"
+
+                    # Append initial commands to the G-code list
+                    updated_gcode.extend([relative_pos_cmd, relative_extruder_cmd, backoff_cmd])
+
+                    # Insert dwell commands based on the calculated dwell time
                     dwell_commands = insert_incremental_dwell(dwell_time, 10)
                     updated_gcode.extend(dwell_commands)
 
-                    # Re-advance filament
-                    if (retract):
-                      advance_command = f"G1 E{retraction_length_mm:.2f} F{retraction_speed_mm_s * 60} ; Re-advance filament\n"
-                      updated_gcode.append(advance_command)
-                      set_abs_retract_mode_cmd = 'M82\n'
-                      updated_gcode.append(set_abs_retract_mode_cmd)
+                    # Append commands to return to the model and reset positioning modes
+                    updated_gcode.extend([return_cmd, abs_pos_cmd, abs_extruder_cmd])
 
 
     return updated_gcode
@@ -173,7 +191,7 @@ def main():
 
     if args.mode == "analyze":
         # Print problem layers and proposed changes
-        print_layer_times_comparison(layer_times, smooth_layer_times_with_percentage(layer_times.copy(), args.variance / 100.0))
+        print_layer_times_comparison(layer_times, smooth_layer_times_with_percentage(layer_times.copy(), args.variance / 100.0, max_dwell_time=args.max_wait_sec))
     elif args.mode == "clean":
         if args.output_file:
             # Generate updated G-code with dwell times and optional retraction
